@@ -12,6 +12,8 @@
 #include <wayland-cursor.h>
 #include "xdg-shell-client-protocol.h"
 
+#include <linux/input.h>
+
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 void registry_add_object (void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version);
@@ -59,7 +61,7 @@ Window* window = NULL;
 
 int main(void)
 {
-    printf("Hello, World!");
+    printf("Hello, World!\n");
 
     // get display
     display = wl_display_connect(NULL);
@@ -120,6 +122,10 @@ int main(void)
     struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, offset, window->width, window->height, stride, WL_SHM_FORMAT_XRGB8888);
     uint32_t *pixels = (uint32_t*)&pool_data[offset];
     memset(pixels, 0, window->width * window->height * sizeof(uint32_t));
+    for (int i = 0; i <= shm_pool_size; i += 1)
+    {
+        pixels[i] = INT32_MAX / 100;
+    }
 
     wl_surface_attach(window->surface, buffer, 0, 0);
     wl_surface_damage(window->surface, 0, 0, UINT32_MAX, UINT32_MAX);
@@ -133,7 +139,7 @@ int main(void)
 
         //wl_display_flush(display);
         if (wl_display_dispatch(display) < 0) break;
-        sleep(1);
+        //sleep(1);
     }
 
     // shutdown
@@ -157,6 +163,7 @@ void registry_add_object (void *data, struct wl_registry *registry, uint32_t nam
         subcompositor = (struct wl_subcompositor*)(wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
     }
     else if (!strcmp(interface,"wl_seat")) {
+        printf("wl_seat\n");
         seat = (struct wl_seat*)(wl_registry_bind (registry, name, &wl_seat_interface, 1));
         wl_seat_add_listener (seat, &seat_listener, data);
     }
@@ -177,6 +184,7 @@ void registry_remove_object (void *data, struct wl_registry *registry, uint32_t 
 void seat_capabilities (void *data, struct wl_seat *seat, uint32_t capabilities)
 {
     if (capabilities & WL_SEAT_CAPABILITY_POINTER) {
+        printf("seat_capabilities\n");
         struct wl_pointer *pointer = wl_seat_get_pointer (seat);
         wl_pointer_add_listener (pointer, &pointer_listener, data);
         cursor_surface = wl_compositor_create_surface(compositor);
@@ -222,6 +230,13 @@ void pointer_motion (void *data, struct wl_pointer *pointer, uint32_t time, wl_f
 
 void pointer_button (void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
+    if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED)
+    {
+        printf("xdg_toplevel_move\n");
+        xdg_toplevel_move(window->xdg_toplevel, seat, serial);
+        //xdg_toplevel_set_minimized(window->xdg_toplevel);
+    }
+
     /*//    std::cout << "pointer button " << button << ", state " << state << std::endl;
 
     window *w = static_cast<window*>(data);
@@ -289,7 +304,7 @@ void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, u
 
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
 {
-    if (width==0 || height==0) return;
+    if (width <= 0 || height <= 0) return;
     //struct Window *window = (struct window*)(data);
     //window_resize(window, width, height, true);
     xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, width, height);
