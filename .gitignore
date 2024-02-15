@@ -1,2 +1,6 @@
 /.idea
+/.vscode
+/.kdev4
 /cmake-build-debug
+/build
+/CMakeFiles
