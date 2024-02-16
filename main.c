@@ -121,8 +121,8 @@ int main(void)
     int offset = window->height * stride * index;
     struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, offset, window->width, window->height, stride, WL_SHM_FORMAT_XRGB8888);
     uint32_t *pixels = (uint32_t*)&pool_data[offset];
-    memset(pixels, 0, window->width * window->height * sizeof(uint32_t));
-    for (int i = 0; i <= shm_pool_size; i += 1)
+    memset(pixels, 0, window->width * window->height);
+    for (int i = 0; i < window->width * window->height; ++i)
     {
         pixels[i] = INT32_MAX / 100;
     }
