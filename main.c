@@ -89,11 +89,11 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
     if (result < 0 || errno == EINTR) return 0;
 
     buffer->pixels = mmap(NULL, buffer->shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, buffer->fd, buffer->shm_pool_size);
+    buffer->pool = wl_shm_create_pool(shm, buffer->fd, buffer->shm_pool_size);
 
     int index = 0;
     int offset = buffer->height * buffer->stride * index;
-    buffer->buffer = wl_shm_pool_create_buffer(pool, offset, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
+    buffer->buffer = wl_shm_pool_create_buffer(buffer->pool, offset, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
     memset(buffer->pixels, 0, buffer->width * buffer->height);
     for (int i = 0; i < buffer->width * buffer->height; ++i)
     {
@@ -101,7 +101,7 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
     }
 
     wl_surface_attach(surface, buffer->buffer, 0, 0);
-    wl_surface_damage(surface, 0, 0, UINT32_MAX, UINT32_MAX);
+    wl_surface_damage(surface, 0, 0, buffer->width, buffer->height);
     wl_surface_commit(surface);
     return 1;
 }
@@ -140,12 +140,6 @@ int main(void)
         xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, window);
         xdg_toplevel_set_title(window->xdg_toplevel, "example");
         xdg_toplevel_set_app_id(window->xdg_toplevel, "example");
-
-        // subsurface
-        /*window->clientSurface = wl_compositor_create_surface(compositor);
-        window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
-        //wl_subsurface_place_above(window->clientSubSurface, window->surface);
-        wl_subsurface_set_position(window->clientSubSurface, 0, 0);*/
     }
     else
     {
@@ -164,7 +158,9 @@ int main(void)
     window->clientSurface = wl_compositor_create_surface(compositor);
     window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
     //wl_subsurface_place_above(window->clientSubSurface, window->surface);
-    wl_subsurface_set_position(window->clientSubSurface, 0, 0);
+    wl_subsurface_set_position(window->clientSubSurface, window->width / 3, window->height / 3);
+    //wl_subsurface_set_sync(window->clientSubSurface);
+    wl_subsurface_set_desync(window->clientSubSurface);
 
     window->clientSurfaceBuffer.width = window->width / 2;
     window->clientSurfaceBuffer.height = window->height / 2;
