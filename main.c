@@ -7,6 +7,9 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include <wayland-util.h>
+#include <wayland-client-core.h>
+#include <wayland-client-protocol.h>
 #include <wayland-client.h>
 //#include <wayland-egl.h>
 #include <wayland-cursor.h>
@@ -162,35 +165,13 @@ int main(void)
     //wl_subsurface_set_sync(window->clientSubSurface);
     wl_subsurface_set_desync(window->clientSubSurface);
 
+    //struct wl_region* region = wl_compositor_create_region(compositor);
+    //wl_region_add(region, window->width / 3, window->height / 3, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
+    //wl_surface_set_opaque_region(window->surface, region);
+
     window->clientSurfaceBuffer.width = window->width / 2;
     window->clientSurfaceBuffer.height = window->height / 2;
     if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "TestWaylandApp_Client", INT32_MAX) != 1) return 0;
-
-    /*const int stride = window->width * sizeof(uint32_t);
-    const int shm_pool_size = window->height * stride;// * 2;
-
-    char name[] = "TestWaylandApp";
-    int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
-    if (fd < 0 || errno == EEXIST) return 0;
-    int result = ftruncate(fd, shm_pool_size);
-    if (result < 0 || errno == EINTR) return 0;
-
-    uint32_t *pixels = mmap(NULL, shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, shm_pool_size);
-
-    int index = 0;
-    int offset = window->height * stride * index;
-    struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, offset, window->width, window->height, stride, WL_SHM_FORMAT_XRGB8888);
-    //uint32_t *pixels = (uint32_t*)&pool_data[offset];
-    memset(pixels, 0, window->width * window->height);
-    for (int i = 0; i < window->width * window->height; ++i)
-    {
-        pixels[i] = INT32_MAX / 100;
-    }
-
-    wl_surface_attach(window->surface, buffer, 0, 0);
-    wl_surface_damage(window->surface, 0, 0, UINT32_MAX, UINT32_MAX);
-    wl_surface_commit(window->surface);*/
 
     // event loop
     while (running)
