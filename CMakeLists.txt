@@ -6,5 +6,5 @@ set(CMAKE_C_COMPILER /bin/gcc)
 
 project(WaylandClientWindow)
 
-add_executable(WaylandClientWindow main.c xdg-shell-client-protocol.c)
+add_executable(WaylandClientWindow main.c xdg-shell-client-protocol.c xdg-decoration-unstable-v1.c)
 target_link_libraries(WaylandClientWindow wayland-client wayland-cursor wayland-egl GL EGL)

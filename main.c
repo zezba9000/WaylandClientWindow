@@ -14,6 +14,7 @@
 //#include <wayland-egl.h>
 #include <wayland-cursor.h>
 #include "xdg-shell-client-protocol.h"
+#include "xdg-decoration-unstable-v1.h"
 
 #include <linux/input.h>
 
@@ -51,6 +52,7 @@ struct wl_seat *seat = NULL;
 struct wl_shm *shm = NULL;
 struct wl_surface *cursor_surface = NULL;
 struct wl_cursor_theme *cursor_theme = NULL;
+struct zxdg_decoration_manager_v1* decoration_manager = NULL;
 int running = 1;
 
 typedef struct SurfaceBuffer
@@ -87,6 +89,7 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
     buffer->name = malloc(nameSize);
     memcpy(buffer->name, name, nameSize);
     buffer->fd = shm_open(buffer->name, O_RDWR | O_CREAT | O_EXCL, 0600);
+    shm_unlink(buffer->name);
     if (buffer->fd < 0 || errno == EEXIST) return 0;
     int result = ftruncate(buffer->fd, buffer->shm_pool_size);
     if (result < 0 || errno == EINTR) return 0;
@@ -104,8 +107,6 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
     }
 
     wl_surface_attach(surface, buffer->buffer, 0, 0);
-    wl_surface_damage(surface, 0, 0, buffer->width, buffer->height);
-    wl_surface_commit(surface);
     return 1;
 }
 
@@ -128,6 +129,13 @@ int main(void)
 
     // output interface
     //wl_global_create(display, );
+
+    // Make sure shared memory isn't mapped
+    //shm_unlink("TestWaylandApp_Decorations");
+    //shm_unlink("TestWaylandApp_Client");
+
+    // get server-side decorations
+    //struct zxdg_toplevel_decoration_v1* d = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, window->xdg_toplevel);
 
     // create window
     window = (struct Window*)calloc(1, sizeof(Window));
@@ -161,9 +169,9 @@ int main(void)
     window->clientSurface = wl_compositor_create_surface(compositor);
     window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
     //wl_subsurface_place_above(window->clientSubSurface, window->surface);
-    wl_subsurface_set_position(window->clientSubSurface, window->width / 3, window->height / 3);
     //wl_subsurface_set_sync(window->clientSubSurface);
     wl_subsurface_set_desync(window->clientSubSurface);
+    wl_subsurface_set_position(window->clientSubSurface, window->width / 3, window->height / 3);
 
     //struct wl_region* region = wl_compositor_create_region(compositor);
     //wl_region_add(region, window->width / 3, window->height / 3, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
@@ -172,6 +180,13 @@ int main(void)
     window->clientSurfaceBuffer.width = window->width / 2;
     window->clientSurfaceBuffer.height = window->height / 2;
     if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "TestWaylandApp_Client", INT32_MAX) != 1) return 0;
+
+    // finalize surfaces
+    wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
+    wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
+    wl_surface_commit(window->surface);
+    wl_surface_commit(window->clientSurface);
+    wl_display_flush(display);
 
     // event loop
     while (running)
@@ -204,23 +219,32 @@ int main(void)
 
 void registry_add_object (void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
 {
-    if (!strcmp(interface,"wl_compositor")) {//wl_compositor_interface.name
+    if (!strcmp(interface,wl_compositor_interface.name))
+    {
         compositor = (struct wl_compositor*)(wl_registry_bind (registry, name, &wl_compositor_interface, 1));
     }
-    else if (strcmp(interface, "wl_subcompositor") == 0) {//wl_subcompositor_interface.name
+    else if (strcmp(interface, wl_subcompositor_interface.name) == 0)
+    {
         subcompositor = (struct wl_subcompositor*)(wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
     }
-    else if (!strcmp(interface,"wl_seat")) {//wl_seat_interface.name
+    else if (!strcmp(interface,wl_seat_interface.name))
+    {
         printf("wl_seat\n");
         seat = (struct wl_seat*)(wl_registry_bind (registry, name, &wl_seat_interface, 1));
         wl_seat_add_listener (seat, &seat_listener, data);
     }
-    else if (strcmp(interface, "wl_shm") == 0) {//wl_shm_interface.name
+    else if (strcmp(interface, wl_shm_interface.name) == 0)
+    {
         shm = (struct wl_shm*)(wl_registry_bind(registry, name, &wl_shm_interface, 1));
         cursor_theme = wl_cursor_theme_load(NULL, 32, shm);
     }
-    else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {//xdg_wm_base_interface.name
+    else if (strcmp(interface, xdg_wm_base_interface.name) == 0)
+    {
         xdg_wm_base = (struct xdg_wm_base*)wl_registry_bind(registry, name, &xdg_wm_base_interface, MIN(version, 2));
+    }
+    else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0)
+    {
+        decoration_manager = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
     }
 }
 
