@@ -52,6 +52,9 @@ int running = 1;
 
 typedef struct Window
 {
+    struct wl_surface* clientSurface;
+    struct wl_subsurface* clientSubSurface;
+
     struct wl_surface* surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
@@ -83,7 +86,8 @@ int main(void)
     window = (struct Window*)calloc(1, sizeof(Window));
     window->width = 320;
     window->height = 240;
-    window->surface = wl_compositor_create_surface (compositor);
+    window->surface = wl_compositor_create_surface(compositor);
+    window->clientSurface = wl_compositor_create_surface(compositor);
     if (xdg_wm_base)
     {
         window->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, window->surface);
@@ -93,6 +97,10 @@ int main(void)
         xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, window);
         xdg_toplevel_set_title(window->xdg_toplevel, "example");
         xdg_toplevel_set_app_id(window->xdg_toplevel, "example");
+
+        // subsurface
+        //window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
+        //wl_subsurface_set_position(window->clientSubSurface, 10, 10);
     }
     else
     {
