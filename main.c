@@ -50,17 +50,61 @@ struct wl_surface *cursor_surface = NULL;
 struct wl_cursor_theme *cursor_theme = NULL;
 int running = 1;
 
+typedef struct SurfaceBuffer
+{
+    int width, height;
+    char* name;
+    int fd;
+    int stride, shm_pool_size;
+    struct wl_shm_pool *pool;
+    struct wl_buffer *buffer;
+    uint32_t *pixels;
+}SurfaceBuffer;
+
 typedef struct Window
 {
     struct wl_surface* clientSurface;
     struct wl_subsurface* clientSubSurface;
+    struct SurfaceBuffer clientSurfaceBuffer;
 
     struct wl_surface* surface;
+    struct SurfaceBuffer surfaceBuffer;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
     int width, height;
 }Window;
 Window* window = NULL;
+
+int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, char* name, int color)
+{
+    buffer->stride = buffer->width * sizeof(uint32_t);
+    buffer->shm_pool_size = buffer->height * buffer->stride;// * 2;
+
+    size_t nameSize = strlen(name);
+    buffer->name = malloc(nameSize);
+    memcpy(buffer->name, name, nameSize);
+    buffer->fd = shm_open(buffer->name, O_RDWR | O_CREAT | O_EXCL, 0600);
+    if (buffer->fd < 0 || errno == EEXIST) return 0;
+    int result = ftruncate(buffer->fd, buffer->shm_pool_size);
+    if (result < 0 || errno == EINTR) return 0;
+
+    buffer->pixels = mmap(NULL, buffer->shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
+    struct wl_shm_pool *pool = wl_shm_create_pool(shm, buffer->fd, buffer->shm_pool_size);
+
+    int index = 0;
+    int offset = buffer->height * buffer->stride * index;
+    buffer->buffer = wl_shm_pool_create_buffer(pool, offset, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
+    memset(buffer->pixels, 0, buffer->width * buffer->height);
+    for (int i = 0; i < buffer->width * buffer->height; ++i)
+    {
+        buffer->pixels[i] = color;
+    }
+
+    wl_surface_attach(surface, buffer->buffer, 0, 0);
+    wl_surface_damage(surface, 0, 0, UINT32_MAX, UINT32_MAX);
+    wl_surface_commit(surface);
+    return 1;
+}
 
 int main(void)
 {
@@ -87,7 +131,6 @@ int main(void)
     window->width = 320;
     window->height = 240;
     window->surface = wl_compositor_create_surface(compositor);
-    window->clientSurface = wl_compositor_create_surface(compositor);
     if (xdg_wm_base)
     {
         window->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, window->surface);
@@ -99,8 +142,10 @@ int main(void)
         xdg_toplevel_set_app_id(window->xdg_toplevel, "example");
 
         // subsurface
-        //window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
-        //wl_subsurface_set_position(window->clientSubSurface, 10, 10);
+        /*window->clientSurface = wl_compositor_create_surface(compositor);
+        window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
+        //wl_subsurface_place_above(window->clientSubSurface, window->surface);
+        wl_subsurface_set_position(window->clientSubSurface, 0, 0);*/
     }
     else
     {
@@ -108,27 +153,39 @@ int main(void)
     }
 
     xdg_toplevel_set_title(window->xdg_toplevel, "Test");
-    xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, 256, 256);
+    xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, window->width, window->height);
     //xdg_toplevel_show_window_menu(window->xdg_toplevel, NULL, 0, 0, 0);
 
     // shared memory buffer
-    const int stride = window->width * sizeof(uint32_t);
+    window->surfaceBuffer.width = window->width;
+    window->surfaceBuffer.height = window->height;
+    if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "TestWaylandApp_Decorations", 0) != 1) return 0;
+
+    window->clientSurface = wl_compositor_create_surface(compositor);
+    window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
+    //wl_subsurface_place_above(window->clientSubSurface, window->surface);
+    wl_subsurface_set_position(window->clientSubSurface, 0, 0);
+
+    window->clientSurfaceBuffer.width = window->width / 2;
+    window->clientSurfaceBuffer.height = window->height / 2;
+    if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "TestWaylandApp_Client", INT32_MAX) != 1) return 0;
+
+    /*const int stride = window->width * sizeof(uint32_t);
     const int shm_pool_size = window->height * stride;// * 2;
 
     char name[] = "TestWaylandApp";
     int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
     if (fd < 0 || errno == EEXIST) return 0;
-    shm_unlink(name);
     int result = ftruncate(fd, shm_pool_size);
     if (result < 0 || errno == EINTR) return 0;
 
-    uint8_t *pool_data = mmap(NULL, shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    uint32_t *pixels = mmap(NULL, shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, shm_pool_size);
 
     int index = 0;
     int offset = window->height * stride * index;
     struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, offset, window->width, window->height, stride, WL_SHM_FORMAT_XRGB8888);
-    uint32_t *pixels = (uint32_t*)&pool_data[offset];
+    //uint32_t *pixels = (uint32_t*)&pool_data[offset];
     memset(pixels, 0, window->width * window->height);
     for (int i = 0; i < window->width * window->height; ++i)
     {
@@ -137,7 +194,7 @@ int main(void)
 
     wl_surface_attach(window->surface, buffer, 0, 0);
     wl_surface_damage(window->surface, 0, 0, UINT32_MAX, UINT32_MAX);
-    wl_surface_commit(window->surface);
+    wl_surface_commit(window->surface);*/
 
     // event loop
     while (running)
@@ -159,27 +216,33 @@ int main(void)
     wl_surface_destroy (window->surface);
     wl_display_disconnect (display);
 
+    // dispose window surface maps
+    munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
+    shm_unlink(window->clientSurfaceBuffer.name);
+
+    munmap(window->surfaceBuffer.pixels, window->surfaceBuffer.shm_pool_size);
+    shm_unlink(window->surfaceBuffer.name);
     return 0;
 }
 
 void registry_add_object (void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
 {
-    if (!strcmp(interface,"wl_compositor")) {
+    if (!strcmp(interface,"wl_compositor")) {//wl_compositor_interface.name
         compositor = (struct wl_compositor*)(wl_registry_bind (registry, name, &wl_compositor_interface, 1));
     }
-    else if (strcmp(interface, "wl_subcompositor") == 0) {
+    else if (strcmp(interface, "wl_subcompositor") == 0) {//wl_subcompositor_interface.name
         subcompositor = (struct wl_subcompositor*)(wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
     }
-    else if (!strcmp(interface,"wl_seat")) {
+    else if (!strcmp(interface,"wl_seat")) {//wl_seat_interface.name
         printf("wl_seat\n");
         seat = (struct wl_seat*)(wl_registry_bind (registry, name, &wl_seat_interface, 1));
         wl_seat_add_listener (seat, &seat_listener, data);
     }
-    else if (strcmp(interface, "wl_shm") == 0) {
+    else if (strcmp(interface, "wl_shm") == 0) {//wl_shm_interface.name
         shm = (struct wl_shm*)(wl_registry_bind(registry, name, &wl_shm_interface, 1));
         cursor_theme = wl_cursor_theme_load(NULL, 32, shm);
     }
-    else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
+    else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {//xdg_wm_base_interface.name
         xdg_wm_base = (struct xdg_wm_base*)wl_registry_bind(registry, name, &xdg_wm_base_interface, MIN(version, 2));
     }
 }
