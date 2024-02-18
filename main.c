@@ -306,6 +306,7 @@ void pointer_button (void *data, struct wl_pointer *pointer, uint32_t serial, ui
         printf("xdg_toplevel_move\n");
         xdg_toplevel_move(window->xdg_toplevel, seat, serial);
         //xdg_toplevel_set_minimized(window->xdg_toplevel);
+        //xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
     }
 
     /*//    std::cout << "pointer button " << button << ", state " << state << std::endl;
