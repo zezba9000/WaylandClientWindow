@@ -15,23 +15,22 @@
 #include <wayland-cursor.h>
 #include "xdg-shell-client-protocol.h"
 #include "xdg-decoration-unstable-v1.h"
-
 #include <linux/input.h>
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
-void registry_add_object (void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version);
-void registry_remove_object (void *data, struct wl_registry *registry, uint32_t name);
+void registry_add_object(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version);
+void registry_remove_object(void *data, struct wl_registry *registry, uint32_t name);
 struct wl_registry_listener registry_listener = {&registry_add_object, &registry_remove_object};
 
-void seat_capabilities (void *data, struct wl_seat *seat, uint32_t capabilities);
+void seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities);
 struct wl_seat_listener seat_listener = {&seat_capabilities};
 
-void pointer_enter (void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y);
-void pointer_leave (void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface);
-void pointer_motion (void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y);
-void pointer_button (void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
-void pointer_axis (void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
+void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y);
+void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface);
+void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y);
+void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
 struct wl_pointer_listener pointer_listener = {&pointer_enter, &pointer_leave, &pointer_motion, &pointer_button, &pointer_axis};
 
 void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial);
@@ -41,7 +40,7 @@ void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel
 void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel);
 struct xdg_toplevel_listener xdg_toplevel_listener = {.configure = xdg_toplevel_handle_configure, .close = xdg_toplevel_handle_close};
 
-void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial);
+void xdg_wm_base_ping(void *data, struct xdg_wm_base *base, uint32_t serial);
 struct xdg_wm_base_listener xdg_wm_base_listener = {.ping = xdg_wm_base_ping};
 
 enum zxdg_toplevel_decoration_v1_mode current_mode = 0;
@@ -73,6 +72,7 @@ typedef struct SurfaceBuffer
 
 typedef struct Window
 {
+    int width, height;
     struct wl_surface* clientSurface;
     struct wl_subsurface* clientSubSurface;
     struct SurfaceBuffer clientSurfaceBuffer;
@@ -81,14 +81,15 @@ typedef struct Window
     struct SurfaceBuffer surfaceBuffer;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
-    int width, height;
+
 }Window;
 Window* window = NULL;
+int useClientDecorations = 1;
 
 int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, char* name, int color)
 {
     buffer->stride = buffer->width * sizeof(uint32_t);
-    buffer->shm_pool_size = buffer->height * buffer->stride;// * 2;
+    buffer->shm_pool_size = buffer->height * buffer->stride;
 
     size_t nameSize = strlen(name);
     buffer->name = malloc(nameSize);
@@ -131,69 +132,42 @@ int main(void)
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, &window);
     wl_display_roundtrip(display);
-
-    // output interface
-    //wl_global_create(display, );
-
-    // Make sure shared memory isn't mapped
-    //shm_unlink("TestWaylandApp_Decorations");
-    //shm_unlink("TestWaylandApp_Client");
+    useClientDecorations = (decoration_manager != NULL) ? 0 : 1;
 
     // create window
     window = (struct Window*)calloc(1, sizeof(Window));
     window->width = 320;
     window->height = 240;
-    window->surface = wl_compositor_create_surface(compositor);
-    if (xdg_wm_base)
-    {
-        window->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, window->surface);
-        window->xdg_toplevel = xdg_surface_get_toplevel(window->xdg_surface);
-        xdg_surface_add_listener(window->xdg_surface, &xdg_surface_listener, window);
-        xdg_toplevel_add_listener(window->xdg_toplevel, &xdg_toplevel_listener, window);
-        xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, window);
-        xdg_toplevel_set_title(window->xdg_toplevel, "example");
-        xdg_toplevel_set_app_id(window->xdg_toplevel, "example");
-    }
-    else
-    {
-        printf("no xdg_wm_base");
-    }
 
-    xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, window->width, window->height);
-    //xdg_toplevel_show_window_menu(window->xdg_toplevel, NULL, 0, 0, 0);
+    // create window surface
+    window->surface = wl_compositor_create_surface(compositor);
+    window->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, window->surface);
+    window->xdg_toplevel = xdg_surface_get_toplevel(window->xdg_surface);
+    xdg_surface_add_listener(window->xdg_surface, &xdg_surface_listener, window);
+    xdg_toplevel_add_listener(window->xdg_toplevel, &xdg_toplevel_listener, window);
+    xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, window);
+    xdg_toplevel_set_title(window->xdg_toplevel, "WaylandClientWindow");
+    xdg_toplevel_set_app_id(window->xdg_toplevel, "WaylandClientWindow");
 
     // get server-side decorations
-    if (decoration_manager != NULL)
+    if (!useClientDecorations)
     {
         decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, window->xdg_toplevel);
         zxdg_toplevel_decoration_v1_add_listener(decoration, &decoration_listener, NULL);
-        printf("Requesting decoration default\n");
-        //zxdg_toplevel_decoration_v1_unset_mode(decoration);
-        //wl_display_roundtrip(display);
-        //wl_display_flush(display);
-        //printf("Setting decoration: %d\n", current_mode);
-        //for (int i = 0; i != 10; ++i) if (wl_display_dispatch(display) < 0) return 0;
-        //zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
-        //current_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
-        //wl_surface_commit(window->clientSurface);
-        //wl_surface_commit(window->surface);
-        //wl_display_flush(display);
     }
 
     // shared memory buffer
     window->surfaceBuffer.width = window->width;
     window->surfaceBuffer.height = window->height;
-    if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "TestWaylandApp_Decorations", 0) != 1) return 0;
+    if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "WaylandClientWindow_Decorations", 0) != 1) return 0;
 
     window->clientSurface = wl_compositor_create_surface(compositor);
     window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
     window->clientSurfaceBuffer.width = window->width / 2;
     window->clientSurfaceBuffer.height = window->height / 2;
-    //wl_subsurface_place_above(window->clientSubSurface, window->surface);
-    //wl_subsurface_set_sync(window->clientSubSurface);
     wl_subsurface_set_desync(window->clientSubSurface);
     wl_subsurface_set_position(window->clientSubSurface, (window->width / 2) - (window->clientSurfaceBuffer.width / 2), (window->height / 2) - (window->clientSurfaceBuffer.height / 2));
-    if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "TestWaylandApp_Client", INT32_MAX) != 1) return 0;
+    if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "WaylandClientWindow_Client", INT32_MAX) != 1) return 0;
 
     // finalize surfaces
     wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
@@ -206,34 +180,27 @@ int main(void)
     while (running)
     {
         //wl_display_dispatch_pending (display);
-        //draw_window(&window);
-
-        //wl_display_flush(display);
         if (wl_display_dispatch(display) < 0) break;
-        //sleep(1);
     }
 
     // shutdown
-    if(xdg_wm_base)
+    if(xdg_wm_base != NULL)
     {
         xdg_toplevel_destroy(window->xdg_toplevel);
         xdg_surface_destroy(window->xdg_surface);
     }
-    if (decoration_manager != NULL) zxdg_toplevel_decoration_v1_destroy(decoration);
-    wl_surface_destroy (window->clientSurface);
-    wl_surface_destroy (window->surface);
-    wl_display_disconnect (display);
 
-    // dispose window surface maps
+    if (decoration != NULL) zxdg_toplevel_decoration_v1_destroy(decoration);
+    wl_surface_destroy(window->clientSurface);
+    wl_surface_destroy(window->surface);
+    wl_display_disconnect(display);
+
     munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
-    shm_unlink(window->clientSurfaceBuffer.name);
-
     munmap(window->surfaceBuffer.pixels, window->surfaceBuffer.shm_pool_size);
-    shm_unlink(window->surfaceBuffer.name);
     return 0;
 }
 
-void registry_add_object (void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
+void registry_add_object(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
 {
     if (!strcmp(interface,wl_compositor_interface.name))
     {
@@ -259,31 +226,32 @@ void registry_add_object (void *data, struct wl_registry *registry, uint32_t nam
     }
     else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0)
     {
-        printf("zxdg_decoration_manager_v1_interface\n");
         decoration_manager = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
     }
 }
 
-void registry_remove_object (void *data, struct wl_registry *registry, uint32_t name)
+void registry_remove_object(void *data, struct wl_registry *registry, uint32_t name)
 {
     // TODO
 }
 
-void seat_capabilities (void *data, struct wl_seat *seat, uint32_t capabilities)
+void seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities)
 {
     if (capabilities & WL_SEAT_CAPABILITY_POINTER)
     {
-        struct wl_pointer *pointer = wl_seat_get_pointer (seat);
-        wl_pointer_add_listener (pointer, &pointer_listener, data);
+        struct wl_pointer *pointer = wl_seat_get_pointer(seat);
+        wl_pointer_add_listener(pointer, &pointer_listener, data);
         cursor_surface = wl_compositor_create_surface(compositor);
     }
-    //    if (capabilities & WL_SEAT_CAPABILITY_KEYBOARD) {
-    //        struct wl_keyboard *keyboard = wl_seat_get_keyboard (seat);
-    //        wl_keyboard_add_listener (keyboard, &keyboard_listener, NULL);
-    //    }
+
+    /*if (capabilities & WL_SEAT_CAPABILITY_KEYBOARD)
+    {
+        struct wl_keyboard *keyboard = wl_seat_get_keyboard (seat);
+        wl_keyboard_add_listener (keyboard, &keyboard_listener, NULL);
+    }*/
 }
 
-void pointer_enter (void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y)
+void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y)
 {
     /*window *w = static_cast<window*>(data);
     w->current_surface = surface;
@@ -305,18 +273,17 @@ void pointer_enter (void *data, struct wl_pointer *pointer, uint32_t serial, str
     wl_surface_commit(cursor_surface);*/
 }
 
-void pointer_leave (void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface)
+void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface)
 {
-    /*window *w = static_cast<window*>(data);
-    w->button_pressed = false;*/
+    // TODO
 }
 
-void pointer_motion (void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
+void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
-    //    std::cout << "pointer motion " << wl_fixed_to_double(x) << " " << wl_fixed_to_double(y) << std::endl;
+    // TODO
 }
 
-void pointer_button (void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
+void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED)
     {
@@ -324,22 +291,9 @@ void pointer_button (void *data, struct wl_pointer *pointer, uint32_t serial, ui
         xdg_toplevel_move(window->xdg_toplevel, seat, serial);
         //xdg_toplevel_set_minimized(window->xdg_toplevel);
         //xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
-
-        /*// Toggle mode
-        if (current_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE)
-        {
-            current_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
-        }
-        else
-        {
-            current_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
-        }
-        zxdg_toplevel_decoration_v1_set_mode(decoration, current_mode);*/
     }
 
-    /*//    std::cout << "pointer button " << button << ", state " << state << std::endl;
-
-    window *w = static_cast<window*>(data);
+    /*window *w = static_cast<window*>(data);
     w->button_pressed = (button==BTN_LEFT) && (state==WL_POINTER_BUTTON_STATE_PRESSED);
 
     if(w->button_pressed) {
@@ -392,7 +346,7 @@ void pointer_button (void *data, struct wl_pointer *pointer, uint32_t serial, ui
     }*/
 }
 
-void pointer_axis (void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
+void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
 {
     // TODO
 }
@@ -406,8 +360,7 @@ void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, u
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
 {
     if (width <= 0 || height <= 0) return;
-    //struct Window *window = (struct window*)(data);
-    //window_resize(window, width, height, true);
+    // TODO: resize surface buffers
     xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, width, height);
 }
 
@@ -416,9 +369,9 @@ void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel)
     running = 0;
 }
 
-void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial)
+void xdg_wm_base_ping(void *data, struct xdg_wm_base *base, uint32_t serial)
 {
-    xdg_wm_base_pong(xdg_wm_base, serial);
+    xdg_wm_base_pong(base, serial);
 }
 
 void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, enum zxdg_toplevel_decoration_v1_mode mode)
@@ -426,7 +379,7 @@ void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 
 	printf("decoration_handle_configure: %d\n", mode);
 	current_mode = mode;
 
-    wl_surface_commit(window->clientSurface);
+    if (useClientDecorations) wl_surface_commit(window->clientSurface);
     wl_surface_commit(window->surface);
     wl_display_flush(display);
 }
