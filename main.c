@@ -44,6 +44,10 @@ struct xdg_toplevel_listener xdg_toplevel_listener = {.configure = xdg_toplevel_
 void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial);
 struct xdg_wm_base_listener xdg_wm_base_listener = {.ping = xdg_wm_base_ping};
 
+enum zxdg_toplevel_decoration_v1_mode current_mode = 0;
+void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, enum zxdg_toplevel_decoration_v1_mode mode);
+static const struct zxdg_toplevel_decoration_v1_listener decoration_listener = {.configure = decoration_handle_configure};
+
 struct wl_display *display = NULL;
 struct wl_compositor *compositor = NULL;
 struct wl_subcompositor *subcompositor = NULL;
@@ -134,9 +138,6 @@ int main(void)
     //shm_unlink("TestWaylandApp_Decorations");
     //shm_unlink("TestWaylandApp_Client");
 
-    // get server-side decorations
-    //struct zxdg_toplevel_decoration_v1* d = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, window->xdg_toplevel);
-
     // create window
     window = (struct Window*)calloc(1, sizeof(Window));
     window->width = 320;
@@ -157,9 +158,16 @@ int main(void)
         printf("no xdg_wm_base");
     }
 
-    xdg_toplevel_set_title(window->xdg_toplevel, "Test");
     xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, window->width, window->height);
     //xdg_toplevel_show_window_menu(window->xdg_toplevel, NULL, 0, 0, 0);
+
+    // get server-side decorations
+    //if (decoration_manager != NULL)
+    {
+        struct zxdg_toplevel_decoration_v1* decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, window->xdg_toplevel);
+        zxdg_toplevel_decoration_v1_add_listener(decoration, &decoration_listener, NULL);
+        zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    }
 
     // shared memory buffer
     window->surfaceBuffer.width = window->width;
@@ -168,17 +176,12 @@ int main(void)
 
     window->clientSurface = wl_compositor_create_surface(compositor);
     window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
+    window->clientSurfaceBuffer.width = window->width / 2;
+    window->clientSurfaceBuffer.height = window->height / 2;
     //wl_subsurface_place_above(window->clientSubSurface, window->surface);
     //wl_subsurface_set_sync(window->clientSubSurface);
     wl_subsurface_set_desync(window->clientSubSurface);
-    wl_subsurface_set_position(window->clientSubSurface, window->width / 3, window->height / 3);
-
-    //struct wl_region* region = wl_compositor_create_region(compositor);
-    //wl_region_add(region, window->width / 3, window->height / 3, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
-    //wl_surface_set_opaque_region(window->surface, region);
-
-    window->clientSurfaceBuffer.width = window->width / 2;
-    window->clientSurfaceBuffer.height = window->height / 2;
+    wl_subsurface_set_position(window->clientSubSurface, (window->width / 2) - (window->clientSurfaceBuffer.width / 2), (window->height / 2) - (window->clientSurfaceBuffer.height / 2));
     if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "TestWaylandApp_Client", INT32_MAX) != 1) return 0;
 
     // finalize surfaces
@@ -229,7 +232,6 @@ void registry_add_object (void *data, struct wl_registry *registry, uint32_t nam
     }
     else if (!strcmp(interface,wl_seat_interface.name))
     {
-        printf("wl_seat\n");
         seat = (struct wl_seat*)(wl_registry_bind (registry, name, &wl_seat_interface, 1));
         wl_seat_add_listener (seat, &seat_listener, data);
     }
@@ -244,6 +246,7 @@ void registry_add_object (void *data, struct wl_registry *registry, uint32_t nam
     }
     else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0)
     {
+        printf("zxdg_decoration_manager_v1_interface\n");
         decoration_manager = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
     }
 }
@@ -255,8 +258,8 @@ void registry_remove_object (void *data, struct wl_registry *registry, uint32_t 
 
 void seat_capabilities (void *data, struct wl_seat *seat, uint32_t capabilities)
 {
-    if (capabilities & WL_SEAT_CAPABILITY_POINTER) {
-        printf("seat_capabilities\n");
+    if (capabilities & WL_SEAT_CAPABILITY_POINTER)
+    {
         struct wl_pointer *pointer = wl_seat_get_pointer (seat);
         wl_pointer_add_listener (pointer, &pointer_listener, data);
         cursor_surface = wl_compositor_create_surface(compositor);
@@ -391,4 +394,10 @@ void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel)
 void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial)
 {
     xdg_wm_base_pong(xdg_wm_base, serial);
+}
+
+void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, enum zxdg_toplevel_decoration_v1_mode mode)
+{
+	printf("decoration_handle_configure: %d\n", mode);
+	current_mode = mode;
 }
