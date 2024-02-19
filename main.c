@@ -219,7 +219,7 @@ int main(void)
         xdg_toplevel_destroy(window->xdg_toplevel);
         xdg_surface_destroy(window->xdg_surface);
     }
-    zxdg_toplevel_decoration_v1_destroy(decoration);
+    if (decoration_manager != NULL) zxdg_toplevel_decoration_v1_destroy(decoration);
     wl_surface_destroy (window->clientSurface);
     wl_surface_destroy (window->surface);
     wl_display_disconnect (display);
@@ -400,7 +400,7 @@ void pointer_axis (void *data, struct wl_pointer *pointer, uint32_t time, uint32
 void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial)
 {
     xdg_surface_ack_configure(xdg_surface, serial);
-    zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    if (decoration_manager != NULL) zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 }
 
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
