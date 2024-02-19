@@ -57,6 +57,7 @@ struct wl_shm *shm = NULL;
 struct wl_surface *cursor_surface = NULL;
 struct wl_cursor_theme *cursor_theme = NULL;
 struct zxdg_decoration_manager_v1* decoration_manager = NULL;
+struct zxdg_toplevel_decoration_v1* decoration = NULL;
 int running = 1;
 
 typedef struct SurfaceBuffer
@@ -162,11 +163,21 @@ int main(void)
     //xdg_toplevel_show_window_menu(window->xdg_toplevel, NULL, 0, 0, 0);
 
     // get server-side decorations
-    //if (decoration_manager != NULL)
+    if (decoration_manager != NULL)
     {
-        struct zxdg_toplevel_decoration_v1* decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, window->xdg_toplevel);
+        decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, window->xdg_toplevel);
         zxdg_toplevel_decoration_v1_add_listener(decoration, &decoration_listener, NULL);
-        zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+        printf("Requesting decoration default\n");
+        //zxdg_toplevel_decoration_v1_unset_mode(decoration);
+        //wl_display_roundtrip(display);
+        //wl_display_flush(display);
+        //printf("Setting decoration: %d\n", current_mode);
+        //for (int i = 0; i != 10; ++i) if (wl_display_dispatch(display) < 0) return 0;
+        //zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+        //current_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
+        //wl_surface_commit(window->clientSurface);
+        //wl_surface_commit(window->surface);
+        //wl_display_flush(display);
     }
 
     // shared memory buffer
@@ -185,10 +196,10 @@ int main(void)
     if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "TestWaylandApp_Client", INT32_MAX) != 1) return 0;
 
     // finalize surfaces
-    wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
     wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
-    wl_surface_commit(window->surface);
+    wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
     wl_surface_commit(window->clientSurface);
+    wl_surface_commit(window->surface);
     wl_display_flush(display);
 
     // event loop
@@ -208,6 +219,8 @@ int main(void)
         xdg_toplevel_destroy(window->xdg_toplevel);
         xdg_surface_destroy(window->xdg_surface);
     }
+    zxdg_toplevel_decoration_v1_destroy(decoration);
+    wl_surface_destroy (window->clientSurface);
     wl_surface_destroy (window->surface);
     wl_display_disconnect (display);
 
@@ -311,6 +324,17 @@ void pointer_button (void *data, struct wl_pointer *pointer, uint32_t serial, ui
         xdg_toplevel_move(window->xdg_toplevel, seat, serial);
         //xdg_toplevel_set_minimized(window->xdg_toplevel);
         //xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
+
+        /*// Toggle mode
+        if (current_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE)
+        {
+            current_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+        }
+        else
+        {
+            current_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
+        }
+        zxdg_toplevel_decoration_v1_set_mode(decoration, current_mode);*/
     }
 
     /*//    std::cout << "pointer button " << button << ", state " << state << std::endl;
@@ -376,6 +400,7 @@ void pointer_axis (void *data, struct wl_pointer *pointer, uint32_t time, uint32
 void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial)
 {
     xdg_surface_ack_configure(xdg_surface, serial);
+    zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 }
 
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
@@ -400,4 +425,8 @@ void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 
 {
 	printf("decoration_handle_configure: %d\n", mode);
 	current_mode = mode;
+
+    wl_surface_commit(window->clientSurface);
+    wl_surface_commit(window->surface);
+    wl_display_flush(display);
 }
