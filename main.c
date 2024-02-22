@@ -62,6 +62,7 @@ int running = 1;
 typedef struct SurfaceBuffer
 {
     int width, height;
+    int color;
     char* name;
     int fd;
     int stride, shm_pool_size;
@@ -107,9 +108,46 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
     int offset = buffer->height * buffer->stride * index;
     buffer->buffer = wl_shm_pool_create_buffer(buffer->pool, offset, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
     memset(buffer->pixels, 0, buffer->width * buffer->height);
+    buffer->color = color;
     for (int i = 0; i < buffer->width * buffer->height; ++i)
     {
         buffer->pixels[i] = color;
+    }
+
+    wl_surface_attach(surface, buffer->buffer, 0, 0);
+    return 1;
+}
+
+int ResizeSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, int width, int height)
+{
+    // dispose old buffer
+    munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
+    wl_shm_pool_destroy(buffer->pool);
+
+    // set new size
+    buffer->width = width;
+    buffer->height = height;
+
+    // create new buffer
+    buffer->stride = buffer->width * sizeof(uint32_t);
+    buffer->shm_pool_size = buffer->height * buffer->stride;
+
+    buffer->fd = shm_open(buffer->name, O_RDWR | O_CREAT | O_EXCL, 0600);
+    shm_unlink(buffer->name);
+    if (buffer->fd < 0 || errno == EEXIST) return 0;
+    int result = ftruncate(buffer->fd, buffer->shm_pool_size);
+    if (result < 0 || errno == EINTR) return 0;
+
+    buffer->pixels = mmap(NULL, buffer->shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
+    buffer->pool = wl_shm_create_pool(shm, buffer->fd, buffer->shm_pool_size);
+
+    int index = 0;
+    int offset = buffer->height * buffer->stride * index;
+    buffer->buffer = wl_shm_pool_create_buffer(buffer->pool, offset, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
+    memset(buffer->pixels, 0, buffer->width * buffer->height);
+    for (int i = 0; i < buffer->width * buffer->height; ++i)
+    {
+        buffer->pixels[i] = buffer->color;
     }
 
     wl_surface_attach(surface, buffer->buffer, 0, 0);
@@ -184,6 +222,14 @@ int main(void)
     }
 
     // shutdown
+    if (window->clientSurface != NULL)
+    {
+        munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
+        wl_shm_pool_destroy(window->clientSurfaceBuffer.pool);
+    }
+    munmap(window->surfaceBuffer.pixels, window->surfaceBuffer.shm_pool_size);
+    wl_shm_pool_destroy(window->surfaceBuffer.pool);
+
     if(xdg_wm_base != NULL)
     {
         xdg_toplevel_destroy(window->xdg_toplevel);
@@ -194,9 +240,6 @@ int main(void)
     wl_surface_destroy(window->clientSurface);
     wl_surface_destroy(window->surface);
     wl_display_disconnect(display);
-
-    munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
-    munmap(window->surfaceBuffer.pixels, window->surfaceBuffer.shm_pool_size);
     return 0;
 }
 
@@ -288,9 +331,9 @@ void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, uin
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED)
     {
         printf("xdg_toplevel_move\n");
-        xdg_toplevel_move(window->xdg_toplevel, seat, serial);
+        //xdg_toplevel_move(window->xdg_toplevel, seat, serial);
         //xdg_toplevel_set_minimized(window->xdg_toplevel);
-        //xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
+        xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
     }
 
     /*window *w = static_cast<window*>(data);
@@ -360,8 +403,15 @@ void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, u
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
 {
     if (width <= 0 || height <= 0) return;
-    // TODO: resize surface buffers
+    ResizeSurfaceBuffer(&window->surfaceBuffer, window->surface, width, height);
+
+    //wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
+    wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
+    //wl_surface_commit(window->clientSurface);
+    wl_surface_commit(window->surface);
+
     xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, width, height);
+    wl_display_flush(display);
 }
 
 void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel)
