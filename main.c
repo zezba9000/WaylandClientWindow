@@ -62,7 +62,7 @@ int running = 1;
 typedef struct SurfaceBuffer
 {
     int width, height;
-    int color;
+    uint32_t color;
     char* name;
     int fd;
     int stride, shm_pool_size;
@@ -92,9 +92,9 @@ int useClientDecorations = 1;
 #define DECORATIONS_TOPBAR_SIZE 32
 #define DECORATIONS_BUTTON_SIZE 32
 
-int ToColor(char r, char g, char b, char a)
+uint32_t ToColor(char r, char g, char b, char a)
 {
-    int result = 0;
+    uint32_t result = 0;
     char* c = (char*)&result;
     c[0] = b;
     c[1] = g;
@@ -103,12 +103,33 @@ int ToColor(char r, char g, char b, char a)
     return result;
 }
 
-void BlitRect(uint32_t* pixels, int x, int y, int width, int height, int color)
+void BlitRect(uint32_t* pixels, int x, int y, int width, int height, uint32_t color)
 {
-    // TODO
+    int widthOffset = width + x;
+    int heightOffset = height + y;
+    for (int yi = y; yi < heightOffset; ++yi)
+    {
+        for (int xi = x; xi < widthOffset; ++xi)
+        {
+            int i = xi + (yi * window->compositeWidth);
+            pixels[i] = color;
+        }
+    }
 }
 
-int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, char* name, int color)
+void DrawButtons()
+{
+    int x = window->compositeWidth - (24 + 4);
+    BlitRect(window->surfaceBuffer.pixels, x, 4, 24, 24, ToColor(255, 0, 0, 255));
+
+    x -= 24 + 4;
+    BlitRect(window->surfaceBuffer.pixels, x, 4, 24, 24, ToColor(0, 255, 0, 255));
+
+    x -= 24 + 4;
+    BlitRect(window->surfaceBuffer.pixels, x, 4, 24, 24, ToColor(0, 0, 255, 255));
+}
+
+int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, char* name, uint32_t color)
 {
     buffer->stride = buffer->width * sizeof(uint32_t);
     buffer->shm_pool_size = buffer->height * buffer->stride;
@@ -218,7 +239,7 @@ int main(void)
         zxdg_toplevel_decoration_v1_add_listener(decoration, &decoration_listener, NULL);
     }
 
-    // shared memory buffer
+    // surface buffers
     if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "WaylandClientWindow_Decorations", ToColor(127, 127, 127, 255)) != 1) return 0;
     if (useClientDecorations)
     {
@@ -228,6 +249,9 @@ int main(void)
         wl_subsurface_set_position(window->clientSubSurface, DECORATIONS_BAR_SIZE, DECORATIONS_TOPBAR_SIZE);
         if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "WaylandClientWindow_Client", ToColor(255, 255, 255, 255)) != 1) return 0;
     }
+
+    // draw buttons
+    DrawButtons();
 
     // finalize surfaces
     wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
@@ -428,6 +452,7 @@ void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, u
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
 {
     if (width <= 0 || height <= 0) return;
+    if (width == window->compositeWidth && height == window->compositeHeight) return;
 
     int clientWidth = width;
     int clientHeight = height;
