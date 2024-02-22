@@ -248,10 +248,8 @@ int main(void)
         wl_subsurface_set_desync(window->clientSubSurface);
         wl_subsurface_set_position(window->clientSubSurface, DECORATIONS_BAR_SIZE, DECORATIONS_TOPBAR_SIZE);
         if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "WaylandClientWindow_Client", ToColor(255, 255, 255, 255)) != 1) return 0;
+        DrawButtons();
     }
-
-    // draw buttons
-    DrawButtons();
 
     // finalize surfaces
     wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
@@ -468,6 +466,7 @@ void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel
         ResizeSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface);
         wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
         wl_surface_commit(window->clientSurface);
+        DrawButtons();
     }
 
     ResizeSurfaceBuffer(&window->surfaceBuffer, window->surface);
@@ -488,12 +487,17 @@ void xdg_wm_base_ping(void *data, struct xdg_wm_base *base, uint32_t serial)
     xdg_wm_base_pong(base, serial);
 }
 
+int t = 0;
 void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, enum zxdg_toplevel_decoration_v1_mode mode)
 {
-	printf("decoration_handle_configure: %d\n", mode);
-	current_mode = mode;
+    current_mode = mode;
 
-    if (useClientDecorations) wl_surface_commit(window->clientSurface);
-    wl_surface_commit(window->surface);
-    wl_display_flush(display);
+    if (t != 2)
+    {
+        printf("decoration_handle_configure: %d\n", mode);
+        t++;
+        if (useClientDecorations) wl_surface_commit(window->clientSurface);
+        wl_surface_commit(window->surface);
+        wl_display_flush(display);
+    }
 }
