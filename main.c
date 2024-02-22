@@ -74,6 +74,7 @@ typedef struct SurfaceBuffer
 typedef struct Window
 {
     int width, height;
+    int compositeWidth, compositeHeight;
     struct wl_surface* clientSurface;
     struct wl_subsurface* clientSubSurface;
     struct SurfaceBuffer clientSurfaceBuffer;
@@ -87,14 +88,39 @@ typedef struct Window
 Window* window = NULL;
 int useClientDecorations = 1;
 
+#define DECORATIONS_BAR_SIZE 4
+#define DECORATIONS_TOPBAR_SIZE 32
+#define DECORATIONS_BUTTON_SIZE 32
+
+int ToColor(char r, char g, char b, char a)
+{
+    int result = 0;
+    char* c = (char*)&result;
+    c[0] = b;
+    c[1] = g;
+    c[2] = r;
+    c[3] = a;
+    return result;
+}
+
+void BlitRect(uint32_t* pixels, int x, int y, int width, int height, int color)
+{
+    // TODO
+}
+
 int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, char* name, int color)
 {
     buffer->stride = buffer->width * sizeof(uint32_t);
     buffer->shm_pool_size = buffer->height * buffer->stride;
 
-    size_t nameSize = strlen(name);
-    buffer->name = malloc(nameSize);
-    memcpy(buffer->name, name, nameSize);
+    if (name != NULL)
+    {
+        if (buffer->name != NULL) free(buffer->name);
+        size_t nameSize = strlen(name);
+        buffer->name = malloc(nameSize);
+        memcpy(buffer->name, name, nameSize);
+    }
+
     buffer->fd = shm_open(buffer->name, O_RDWR | O_CREAT | O_EXCL, 0600);
     shm_unlink(buffer->name);
     if (buffer->fd < 0 || errno == EEXIST) return 0;
@@ -118,40 +144,39 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
     return 1;
 }
 
-int ResizeSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, int width, int height)
+int ResizeSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface)
 {
     // dispose old buffer
-    munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
+    munmap(buffer->pixels, buffer->shm_pool_size);
     wl_shm_pool_destroy(buffer->pool);
 
-    // set new size
-    buffer->width = width;
-    buffer->height = height;
-
     // create new buffer
-    buffer->stride = buffer->width * sizeof(uint32_t);
-    buffer->shm_pool_size = buffer->height * buffer->stride;
-
-    buffer->fd = shm_open(buffer->name, O_RDWR | O_CREAT | O_EXCL, 0600);
-    shm_unlink(buffer->name);
-    if (buffer->fd < 0 || errno == EEXIST) return 0;
-    int result = ftruncate(buffer->fd, buffer->shm_pool_size);
-    if (result < 0 || errno == EINTR) return 0;
-
-    buffer->pixels = mmap(NULL, buffer->shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
-    buffer->pool = wl_shm_create_pool(shm, buffer->fd, buffer->shm_pool_size);
-
-    int index = 0;
-    int offset = buffer->height * buffer->stride * index;
-    buffer->buffer = wl_shm_pool_create_buffer(buffer->pool, offset, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
-    memset(buffer->pixels, 0, buffer->width * buffer->height);
-    for (int i = 0; i < buffer->width * buffer->height; ++i)
-    {
-        buffer->pixels[i] = buffer->color;
-    }
-
-    wl_surface_attach(surface, buffer->buffer, 0, 0);
+    CreateSurfaceBuffer(buffer, surface, NULL, buffer->color);
     return 1;
+}
+
+void SetWindowSize(int width, int height)
+{
+    window->width = width;
+    window->height = height;
+    if (useClientDecorations)
+    {
+        window->compositeWidth = window->width + (DECORATIONS_BAR_SIZE * 2);
+        window->compositeHeight = window->height + (DECORATIONS_BAR_SIZE + DECORATIONS_TOPBAR_SIZE);
+        window->surfaceBuffer.width = window->compositeWidth;
+        window->surfaceBuffer.height = window->compositeHeight;
+        window->clientSurfaceBuffer.width = width;
+        window->clientSurfaceBuffer.height = height;
+    }
+    else
+    {
+        window->compositeWidth = width;
+        window->compositeHeight = height;
+        window->surfaceBuffer.width = width;
+        window->surfaceBuffer.height = height;
+        window->clientSurfaceBuffer.width = -1;
+        window->clientSurfaceBuffer.height = -1;
+    }
 }
 
 int main(void)
@@ -170,12 +195,11 @@ int main(void)
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, &window);
     wl_display_roundtrip(display);
-    useClientDecorations = (decoration_manager != NULL) ? 0 : 1;
+    useClientDecorations = (decoration_manager == NULL) ? 1 : 0;
 
     // create window
     window = (struct Window*)calloc(1, sizeof(Window));
-    window->width = 320;
-    window->height = 240;
+    SetWindowSize(320, 240);
 
     // create window surface
     window->surface = wl_compositor_create_surface(compositor);
@@ -195,23 +219,24 @@ int main(void)
     }
 
     // shared memory buffer
-    window->surfaceBuffer.width = window->width;
-    window->surfaceBuffer.height = window->height;
-    if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "WaylandClientWindow_Decorations", 0) != 1) return 0;
-
-    window->clientSurface = wl_compositor_create_surface(compositor);
-    window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
-    window->clientSurfaceBuffer.width = window->width / 2;
-    window->clientSurfaceBuffer.height = window->height / 2;
-    wl_subsurface_set_desync(window->clientSubSurface);
-    wl_subsurface_set_position(window->clientSubSurface, (window->width / 2) - (window->clientSurfaceBuffer.width / 2), (window->height / 2) - (window->clientSurfaceBuffer.height / 2));
-    if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "WaylandClientWindow_Client", INT32_MAX) != 1) return 0;
+    if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "WaylandClientWindow_Decorations", ToColor(127, 127, 127, 255)) != 1) return 0;
+    if (useClientDecorations)
+    {
+        window->clientSurface = wl_compositor_create_surface(compositor);
+        window->clientSubSurface = wl_subcompositor_get_subsurface(subcompositor, window->clientSurface, window->surface);
+        wl_subsurface_set_desync(window->clientSubSurface);
+        wl_subsurface_set_position(window->clientSubSurface, DECORATIONS_BAR_SIZE, DECORATIONS_TOPBAR_SIZE);
+        if (CreateSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface, "WaylandClientWindow_Client", ToColor(255, 255, 255, 255)) != 1) return 0;
+    }
 
     // finalize surfaces
-    wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
     wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
-    wl_surface_commit(window->clientSurface);
     wl_surface_commit(window->surface);
+    if (useClientDecorations)
+    {
+        wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
+        wl_surface_commit(window->clientSurface);
+    }
     wl_display_flush(display);
 
     // event loop
@@ -222,7 +247,7 @@ int main(void)
     }
 
     // shutdown
-    if (window->clientSurface != NULL)
+    if (useClientDecorations)
     {
         munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
         wl_shm_pool_destroy(window->clientSurfaceBuffer.pool);
@@ -237,7 +262,7 @@ int main(void)
     }
 
     if (decoration != NULL) zxdg_toplevel_decoration_v1_destroy(decoration);
-    wl_surface_destroy(window->clientSurface);
+    if (useClientDecorations) wl_surface_destroy(window->clientSurface);
     wl_surface_destroy(window->surface);
     wl_display_disconnect(display);
     return 0;
@@ -275,7 +300,7 @@ void registry_add_object(void *data, struct wl_registry *registry, uint32_t name
 
 void registry_remove_object(void *data, struct wl_registry *registry, uint32_t name)
 {
-    // TODO
+    // do nothing...
 }
 
 void seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities)
@@ -331,9 +356,9 @@ void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, uin
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED)
     {
         printf("xdg_toplevel_move\n");
-        //xdg_toplevel_move(window->xdg_toplevel, seat, serial);
+        xdg_toplevel_move(window->xdg_toplevel, seat, serial);
         //xdg_toplevel_set_minimized(window->xdg_toplevel);
-        xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
+        //xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
     }
 
     /*window *w = static_cast<window*>(data);
@@ -403,11 +428,25 @@ void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, u
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
 {
     if (width <= 0 || height <= 0) return;
-    ResizeSurfaceBuffer(&window->surfaceBuffer, window->surface, width, height);
 
-    //wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
+    int clientWidth = width;
+    int clientHeight = height;
+    if (useClientDecorations)
+    {
+        clientWidth = width - (DECORATIONS_BAR_SIZE * 2);
+        clientHeight = height - (DECORATIONS_BAR_SIZE + DECORATIONS_TOPBAR_SIZE);
+    }
+    SetWindowSize(clientWidth, clientHeight);
+
+    if (useClientDecorations)
+    {
+        ResizeSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface);
+        wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
+        wl_surface_commit(window->clientSurface);
+    }
+
+    ResizeSurfaceBuffer(&window->surfaceBuffer, window->surface);
     wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
-    //wl_surface_commit(window->clientSurface);
     wl_surface_commit(window->surface);
 
     xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, width, height);
