@@ -16,6 +16,7 @@
 #include "xdg-shell-client-protocol.h"
 #include "xdg-decoration-unstable-v1.h"
 #include <linux/input.h>
+#include <math.h>
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
@@ -57,7 +58,18 @@ struct wl_surface *cursor_surface = NULL;
 struct wl_cursor_theme *cursor_theme = NULL;
 struct zxdg_decoration_manager_v1* decoration_manager = NULL;
 struct zxdg_toplevel_decoration_v1* decoration = NULL;
+
 int running = 1;
+
+struct wl_surface* mouseHoverSurface = NULL;
+uint32_t mouseHoverSerial = -1;
+int mouseX = -1, mouseY = -1;
+int mouseX_Client = -1, mouseY_Client = -1;
+
+typedef struct Rect
+{
+    int x, y, width, height;
+}Rect;
 
 typedef struct SurfaceBuffer
 {
@@ -75,6 +87,13 @@ typedef struct Window
 {
     int width, height;
     int compositeWidth, compositeHeight;
+    int isMaximized;
+
+    Rect clientRect_Drag_TopBar;
+    Rect clientRect_Resize_LeftBar, clientRect_Resize_RightBar, clientRect_Resize_BottomBar, clientRect_Resize_TopBar;
+    Rect clientRect_Resize_BottomLeft, clientRect_Resize_BottomRight, clientRect_Resize_TopLeft, clientRect_Resize_TopRight;
+    Rect clientRect_ButtonMin, clientRect_ButtonMax, clientRect_ButtonClose;
+
     struct wl_surface* clientSurface;
     struct wl_subsurface* clientSubSurface;
     struct SurfaceBuffer clientSurfaceBuffer;
@@ -88,9 +107,24 @@ typedef struct Window
 Window* window = NULL;
 int useClientDecorations = 1;
 
-#define DECORATIONS_BAR_SIZE 4
+#define DECORATIONS_BAR_SIZE 8
 #define DECORATIONS_TOPBAR_SIZE 32
 #define DECORATIONS_BUTTON_SIZE 32
+
+Rect CreateRect(int x, int y, int width, int height)
+{
+    Rect rect;
+    rect.x = x;
+    rect.y = y;
+    rect.width = width;
+    rect.height = height;
+    return rect;
+}
+
+int WithinRect(Rect rect, int x, int y)
+{
+    return x >= rect.x && x <= (rect.x + rect.width) && y >= rect.y && y <= (rect.y + rect.height);
+}
 
 uint32_t ToColor(char r, char g, char b, char a)
 {
@@ -103,6 +137,22 @@ uint32_t ToColor(char r, char g, char b, char a)
     return result;
 }
 
+void BlitPoint(uint32_t* pixels, int x, int y, uint32_t color)
+{
+    int i = x + (y * window->compositeWidth);
+    if (i >= 0 && i < window->surfaceBuffer.shm_pool_size) pixels[i] = color;
+}
+
+void BlitLine(uint32_t* pixels, int x, int y, int velX, int velY, int stepCount, uint32_t color)
+{
+    for (int i = 0; i != stepCount; ++i)
+    {
+        BlitPoint(pixels, x, y, color);
+        x += velX;
+        y += velY;
+    }
+}
+
 void BlitRect(uint32_t* pixels, int x, int y, int width, int height, uint32_t color)
 {
     int widthOffset = width + x;
@@ -111,8 +161,7 @@ void BlitRect(uint32_t* pixels, int x, int y, int width, int height, uint32_t co
     {
         for (int xi = x; xi < widthOffset; ++xi)
         {
-            int i = xi + (yi * window->compositeWidth);
-            pixels[i] = color;
+            BlitPoint(pixels, xi, yi, color);
         }
     }
 }
@@ -120,13 +169,31 @@ void BlitRect(uint32_t* pixels, int x, int y, int width, int height, uint32_t co
 void DrawButtons()
 {
     int x = window->compositeWidth - (24 + 4);
-    BlitRect(window->surfaceBuffer.pixels, x, 4, 24, 24, ToColor(255, 0, 0, 255));
+    Rect rect = window->clientRect_ButtonClose;
+    BlitRect(window->surfaceBuffer.pixels, rect.x, rect.y, rect.width, rect.height, ToColor(255, 0, 0, 255));
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 4, 1, 1, 16, ToColor(0, 0, 0, 255));// cross-right
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 3, rect.y + 4, 1, 1, 16, ToColor(0, 0, 0, 255));// cross-right 2
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 5, rect.y + 4, 1, 1, 16, ToColor(0, 0, 0, 255));// cross-right 3
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 18, rect.y + 4, -1, 1, 16, ToColor(0, 0, 0, 255));// cross-left
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 17, rect.y + 4, -1, 1, 16, ToColor(0, 0, 0, 255));// cross-left 2
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 19, rect.y + 4, -1, 1, 16, ToColor(0, 0, 0, 255));// cross-left 3
 
     x -= 24 + 4;
-    BlitRect(window->surfaceBuffer.pixels, x, 4, 24, 24, ToColor(0, 255, 0, 255));
+    rect = window->clientRect_ButtonMax;
+    BlitRect(window->surfaceBuffer.pixels, rect.x, rect.y, rect.width, rect.height, ToColor(0, 255, 0, 255));
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 20, 1, 0, 16, ToColor(0, 0, 0, 255));// bottom
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 4, 1, 0, 16, ToColor(0, 0, 0, 255));// top
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 5, 1, 0, 16, ToColor(0, 0, 0, 255));// top 2
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 6, 1, 0, 16, ToColor(0, 0, 0, 255));// top 3
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 4, 0, 1, 16, ToColor(0, 0, 0, 255));// left
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 19, rect.y + 4, 0, 1, 16, ToColor(0, 0, 0, 255));// right
 
     x -= 24 + 4;
-    BlitRect(window->surfaceBuffer.pixels, x, 4, 24, 24, ToColor(0, 0, 255, 255));
+    rect = window->clientRect_ButtonMin;
+    BlitRect(window->surfaceBuffer.pixels, rect.x, rect.y, rect.width, rect.height, ToColor(0, 0, 255, 255));
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 20, 1, 0, 16, ToColor(0, 0, 0, 255));// line
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 19, 1, 0, 16, ToColor(0, 0, 0, 255));// line 2
+    BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 18, 1, 0, 16, ToColor(0, 0, 0, 255));// line 3
 }
 
 int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, char* name, uint32_t color)
@@ -188,6 +255,26 @@ void SetWindowSize(int width, int height)
         window->surfaceBuffer.height = window->compositeHeight;
         window->clientSurfaceBuffer.width = width;
         window->clientSurfaceBuffer.height = height;
+
+        // CSD rects
+        window->clientRect_Drag_TopBar = CreateRect(0, 0, window->compositeWidth, DECORATIONS_TOPBAR_SIZE);
+
+        window->clientRect_Resize_LeftBar = CreateRect(0, 0, DECORATIONS_BAR_SIZE, window->compositeHeight);
+        window->clientRect_Resize_RightBar = CreateRect(window->compositeWidth - DECORATIONS_BAR_SIZE, 0, DECORATIONS_BAR_SIZE, window->compositeHeight);
+        window->clientRect_Resize_BottomBar = CreateRect(0, window->compositeHeight - DECORATIONS_BAR_SIZE, window->compositeWidth, DECORATIONS_BAR_SIZE);
+        window->clientRect_Resize_TopBar = CreateRect(0, 0, window->compositeWidth, DECORATIONS_BAR_SIZE);
+
+        window->clientRect_Resize_TopLeft = CreateRect(0, 0, DECORATIONS_BAR_SIZE, DECORATIONS_BAR_SIZE);
+        window->clientRect_Resize_TopRight = CreateRect(window->compositeWidth - DECORATIONS_BAR_SIZE, 0, DECORATIONS_BAR_SIZE, DECORATIONS_BAR_SIZE);
+        window->clientRect_Resize_BottomLeft = CreateRect(0, window->compositeHeight - DECORATIONS_BAR_SIZE, DECORATIONS_BAR_SIZE, DECORATIONS_BAR_SIZE);
+        window->clientRect_Resize_BottomRight = CreateRect(window->compositeWidth - DECORATIONS_BAR_SIZE, window->compositeHeight - DECORATIONS_BAR_SIZE, DECORATIONS_BAR_SIZE, DECORATIONS_BAR_SIZE);
+
+        int x = window->compositeWidth - (24 + 4);
+        window->clientRect_ButtonClose = CreateRect(x, 4, 24, 24);
+        x -= 24 + 4;
+        window->clientRect_ButtonMax = CreateRect(x, 4, 24, 24);
+        x -= 24 + 4;
+        window->clientRect_ButtonMin = CreateRect(x, 4, 24, 24);
     }
     else
     {
@@ -341,99 +428,146 @@ void seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities)
     }*/
 }
 
-void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y)
+void SetMousePos(wl_fixed_t x, wl_fixed_t y)
 {
-    /*window *w = static_cast<window*>(data);
-    w->current_surface = surface;
-
-    std::string cursor = "left_ptr";
-
-    for(const decoration &d: w->decorations) {
-        if(d.surface==surface) {
-            if(resize_cursor.count(d.function)) {
-                cursor = resize_cursor.at(d.function);
-            }
+    if (useClientDecorations)
+    {
+        if (mouseHoverSurface == NULL) return;
+        if (mouseHoverSurface == window->surface)
+        {
+            mouseX = wl_fixed_to_int(x);
+            mouseY = wl_fixed_to_int(y);
+        }
+        else if (mouseHoverSurface == window->clientSurface)
+        {
+            mouseX_Client = wl_fixed_to_int(x);
+            mouseY_Client = wl_fixed_to_int(y);
         }
     }
+    else
+    {
+        mouseX = mouseX_Client = wl_fixed_to_int(x);
+        mouseY = mouseY_Client = wl_fixed_to_int(y);
+    }
+}
 
-    const auto image = wl_cursor_theme_get_cursor(cursor_theme, cursor.c_str())->images[0];
-    wl_pointer_set_cursor(pointer, serial, cursor_surface, image->hotspot_x, image->hotspot_y);
-    wl_surface_attach(cursor_surface, wl_cursor_image_get_buffer(image), 0, 0);
-    wl_surface_damage(cursor_surface, 0, 0, image->width, image->height);
-    wl_surface_commit(cursor_surface);*/
+void SetCursor(struct wl_pointer *pointer, uint32_t serial, char* name)
+{
+    struct wl_cursor* cursor = wl_cursor_theme_get_cursor(cursor_theme, name);
+    if (cursor != NULL)
+    {
+        struct wl_cursor_image* image = cursor->images[0];
+        wl_pointer_set_cursor(pointer, serial, cursor_surface, image->hotspot_x, image->hotspot_y);
+        wl_surface_attach(cursor_surface, wl_cursor_image_get_buffer(image), 0, 0);
+        wl_surface_damage(cursor_surface, 0, 0, image->width, image->height);
+        wl_surface_commit(cursor_surface);
+    }
+}
+
+void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y)
+{
+    mouseHoverSurface = surface;
+    mouseHoverSerial = serial;
+    SetMousePos(x, y);
+    SetCursor(pointer, serial, "left_ptr");
 }
 
 void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface)
 {
-    // TODO
+    mouseHoverSurface = NULL;
+    serial = -1;
 }
 
 void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
-    // TODO
+    SetMousePos(x, y);
 }
 
 void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
-    if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED)
+    if (!useClientDecorations) return;
+    if (button == BTN_LEFT)
     {
-        printf("xdg_toplevel_move\n");
-        xdg_toplevel_move(window->xdg_toplevel, seat, serial);
-        //xdg_toplevel_set_minimized(window->xdg_toplevel);
-        //xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
+        if (mouseHoverSurface == window->surface)
+        {
+            printf("pointer_button MouseX: %d\n", mouseX);
+            printf("pointer_button MouseY: %d\n", mouseY);
+            if (state == WL_POINTER_BUTTON_STATE_RELEASED)
+            {
+                // buttons
+                if (WithinRect(window->clientRect_ButtonClose, mouseX, mouseY))
+                {
+                    running = 0;
+                }
+                else if (WithinRect(window->clientRect_ButtonMax, mouseX, mouseY))
+                {
+                    if (!window->isMaximized)
+                    {
+                        window->isMaximized = 1;
+                        xdg_toplevel_set_maximized(window->xdg_toplevel);
+                        //xdg_toplevel_set_fullscreen(window->xdg_toplevel, NULL);
+                    }
+                    else
+                    {
+                        window->isMaximized = 0;
+                        xdg_toplevel_unset_maximized(window->xdg_toplevel);
+                        //xdg_toplevel_unset_fullscreen(window->xdg_toplevel);
+                    }
+                }
+                else if (WithinRect(window->clientRect_ButtonMin, mouseX, mouseY))
+                {
+                    xdg_toplevel_set_minimized(window->xdg_toplevel);
+                }
+            }
+            else if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+            {
+                // drag
+                if
+                (
+                    !WithinRect(window->clientRect_ButtonClose, mouseX, mouseY) && !WithinRect(window->clientRect_ButtonMax, mouseX, mouseY) && !WithinRect(window->clientRect_ButtonMin, mouseX, mouseY) &&
+                    !WithinRect(window->clientRect_Resize_BottomBar, mouseX, mouseY) && !WithinRect(window->clientRect_Resize_TopBar, mouseX, mouseY) && !WithinRect(window->clientRect_Resize_LeftBar, mouseX, mouseY) && !WithinRect(window->clientRect_Resize_RightBar, mouseX, mouseY) &&
+                    !WithinRect(window->clientRect_Resize_TopLeft, mouseX, mouseY) && !WithinRect(window->clientRect_Resize_TopRight, mouseX, mouseY) && !WithinRect(window->clientRect_Resize_BottomLeft, mouseX, mouseY) && !WithinRect(window->clientRect_Resize_BottomRight, mouseX, mouseY)
+                )
+                {
+                    if (WithinRect(window->clientRect_Drag_TopBar, mouseX, mouseY)) xdg_toplevel_move(window->xdg_toplevel, seat, serial);
+                }
+                // resize corners
+                else if (WithinRect(window->clientRect_Resize_TopLeft, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_TOP_LEFT);
+                }
+                else if (WithinRect(window->clientRect_Resize_TopRight, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_TOP_RIGHT);
+                }
+                else if (WithinRect(window->clientRect_Resize_BottomLeft, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM_LEFT);
+                }
+                else if (WithinRect(window->clientRect_Resize_BottomRight, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM_RIGHT);
+                }
+                // resize edges
+                else if (WithinRect(window->clientRect_Resize_BottomBar, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM);
+                }
+                else if (WithinRect(window->clientRect_Resize_TopBar, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_TOP);
+                }
+                else if (WithinRect(window->clientRect_Resize_LeftBar, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_LEFT);
+                }
+                else if (WithinRect(window->clientRect_Resize_RightBar, mouseX, mouseY))
+                {
+                    xdg_toplevel_resize(window->xdg_toplevel, seat, serial, XDG_TOPLEVEL_RESIZE_EDGE_RIGHT);
+                }
+            }
+        }
     }
-
-    /*window *w = static_cast<window*>(data);
-    w->button_pressed = (button==BTN_LEFT) && (state==WL_POINTER_BUTTON_STATE_PRESSED);
-
-    if(w->button_pressed) {
-        for(int i = 0; i<w->decorations.size(); i++) {
-            if(w->decorations[i].surface==w->current_surface) {
-                switch(w->decorations[i].function) {
-                    case XDG_TOPLEVEL_RESIZE_EDGE_NONE:
-                        if(w->xdg_toplevel) {
-                            xdg_toplevel_move(w->xdg_toplevel, seat, serial);
-                        }
-                        break;
-                    default:
-                        if(w->xdg_toplevel) {
-                            xdg_toplevel_resize(w->xdg_toplevel, seat, serial, w->decorations[i].function);
-                        }
-                        break;
-                }
-            }
-        }
-
-        for(const struct button &b: w->buttons) {
-            if(b.surface==w->current_surface) {
-                switch (b.function) {
-                    case button::type::CLOSE:
-                        running = false;
-                        break;
-                    case button::type::MAXIMISE:
-                        if(w->maximised) {
-                            if(w->xdg_toplevel) {
-                                xdg_toplevel_unset_maximized(w->xdg_toplevel);
-                            }
-                        }
-                        else {
-                            // store original window size
-//                        wl_egl_window_get_attached_size(w->egl_window, &w->width, &w->height);
-                            if(w->xdg_toplevel) {
-                                xdg_toplevel_set_maximized(w->xdg_toplevel);
-                            }
-                        }
-                        w->maximised = !w->maximised;
-                        break;
-                    case button::type::MINIMISE:
-                        if(w->xdg_toplevel) {
-                            xdg_toplevel_set_minimized(w->xdg_toplevel);
-                        }
-                        break;
-                }
-            }
-        }
-    }*/
 }
 
 void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
@@ -466,14 +600,14 @@ void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel
         ResizeSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface);
         wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
         wl_surface_commit(window->clientSurface);
-        DrawButtons();
     }
 
     ResizeSurfaceBuffer(&window->surfaceBuffer, window->surface);
+    if (useClientDecorations) DrawButtons();
     wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
     wl_surface_commit(window->surface);
 
-    xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, width, height);
+    //xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);// not needed
     wl_display_flush(display);
 }
 
@@ -492,7 +626,7 @@ void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 
 {
     current_mode = mode;
 
-    if (t != 2)
+    if (t != 2)// for some reason this is spammed on KDE (so ignore after a couple iterations)
     {
         printf("decoration_handle_configure: %d\n", mode);
         t++;
