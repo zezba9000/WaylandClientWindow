@@ -327,7 +327,8 @@ int main(void)
     }
 
     // surface buffers
-    if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "WaylandClientWindow_Decorations", ToColor(127, 127, 127, 255)) != 1) return 0;
+    uint32_t color = useClientDecorations ? ToColor(127, 127, 127, 255) : ToColor(255, 255, 255, 255);
+    if (CreateSurfaceBuffer(&window->surfaceBuffer, window->surface, "WaylandClientWindow_Decorations", color) != 1) return 0;
     if (useClientDecorations)
     {
         window->clientSurface = wl_compositor_create_surface(compositor);

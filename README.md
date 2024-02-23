@@ -1,5 +1,4 @@
 # Create native Wayland Window Example
-* <b>NOTE: work in progress</b>
 * Client side decoration if needed
 * No OpenGL/Vulkan requirements and just pure Wayland buffers
 * Writen in C
