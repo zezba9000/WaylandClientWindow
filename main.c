@@ -37,9 +37,10 @@ struct wl_pointer_listener pointer_listener = {&pointer_enter, &pointer_leave, &
 void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial);
 struct xdg_surface_listener xdg_surface_listener = {.configure = xdg_surface_handle_configure};
 
+void xdg_toplevelconfigure_bounds(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height);
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states);
 void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel);
-struct xdg_toplevel_listener xdg_toplevel_listener = {.configure = xdg_toplevel_handle_configure, .close = xdg_toplevel_handle_close};
+struct xdg_toplevel_listener xdg_toplevel_listener = {.configure_bounds = xdg_toplevelconfigure_bounds, .configure = xdg_toplevel_handle_configure, .close = xdg_toplevel_handle_close};
 
 void xdg_wm_base_ping(void *data, struct xdg_wm_base *base, uint32_t serial);
 struct xdg_wm_base_listener xdg_wm_base_listener = {.ping = xdg_wm_base_ping};
@@ -237,6 +238,7 @@ int ResizeSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
     // dispose old buffer
     munmap(buffer->pixels, buffer->shm_pool_size);
     wl_shm_pool_destroy(buffer->pool);
+    wl_buffer_destroy(buffer->buffer);
 
     // create new buffer
     CreateSurfaceBuffer(buffer, surface, NULL, buffer->color);
@@ -318,6 +320,7 @@ int main(void)
     xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, window);
     xdg_toplevel_set_title(window->xdg_toplevel, "WaylandClientWindow");
     xdg_toplevel_set_app_id(window->xdg_toplevel, "WaylandClientWindow");
+    xdg_toplevel_set_min_size(window->xdg_toplevel, 100, 100);
 
     // get server-side decorations
     if (!useClientDecorations)
@@ -361,9 +364,11 @@ int main(void)
     {
         munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
         wl_shm_pool_destroy(window->clientSurfaceBuffer.pool);
+        wl_buffer_destroy(window->clientSurfaceBuffer.buffer);
     }
     munmap(window->surfaceBuffer.pixels, window->surfaceBuffer.shm_pool_size);
     wl_shm_pool_destroy(window->surfaceBuffer.pool);
+    wl_buffer_destroy(window->surfaceBuffer.buffer);
 
     if(xdg_wm_base != NULL)
     {
@@ -491,8 +496,6 @@ void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, uin
     {
         if (mouseHoverSurface == window->surface)
         {
-            printf("pointer_button MouseX: %d\n", mouseX);
-            printf("pointer_button MouseY: %d\n", mouseY);
             if (state == WL_POINTER_BUTTON_STATE_RELEASED)
             {
                 // buttons
@@ -504,13 +507,11 @@ void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, uin
                 {
                     if (!window->isMaximized)
                     {
-                        window->isMaximized = 1;
                         xdg_toplevel_set_maximized(window->xdg_toplevel);
                         //xdg_toplevel_set_fullscreen(window->xdg_toplevel, NULL);
                     }
                     else
                     {
-                        window->isMaximized = 0;
                         xdg_toplevel_unset_maximized(window->xdg_toplevel);
                         //xdg_toplevel_unset_fullscreen(window->xdg_toplevel);
                     }
@@ -582,34 +583,68 @@ void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, u
     if (decoration_manager != NULL) zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 }
 
+void xdg_toplevelconfigure_bounds(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height)
+{
+    // do nothing...
+}
+
 void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states)
 {
-    if (width <= 0 || height <= 0) return;
-    if (width == window->compositeWidth && height == window->compositeHeight) return;
-
-    int clientWidth = width;
-    int clientHeight = height;
-    if (useClientDecorations)
+    int activated = 0;
+    int maximized = 0;
+    int fullscreen = 0;
+    int resizing = 0;
+    const uint32_t *state = NULL;
+    wl_array_for_each(state, states)
     {
-        clientWidth = width - (DECORATIONS_BAR_SIZE * 2);
-        clientHeight = height - (DECORATIONS_BAR_SIZE + DECORATIONS_TOPBAR_SIZE);
-    }
-    SetWindowSize(clientWidth, clientHeight);
-
-    if (useClientDecorations)
-    {
-        ResizeSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface);
-        wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
-        wl_surface_commit(window->clientSurface);
+        printf("state: %d\n", *state);
+        if (*state == XDG_TOPLEVEL_STATE_ACTIVATED) activated = 1;
+        if (*state == XDG_TOPLEVEL_STATE_MAXIMIZED) maximized = 1;
+        if (*state == XDG_TOPLEVEL_STATE_FULLSCREEN) fullscreen = 1;
+        if (*state == XDG_TOPLEVEL_STATE_RESIZING) resizing = 1;
     }
 
-    ResizeSurfaceBuffer(&window->surfaceBuffer, window->surface);
-    if (useClientDecorations) DrawButtons();
-    wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
-    wl_surface_commit(window->surface);
+    // manage maximized state
+    if (!window->isMaximized && maximized)
+    {
+        window->isMaximized = 1;
+    }
+    else if (window->isMaximized && activated && !resizing && window->compositeWidth != width && window->compositeHeight != height)
+    {
+        window->isMaximized = 0;
+        xdg_toplevel_unset_maximized(window->xdg_toplevel);
+    }
 
-    //xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);// not needed
-    wl_display_flush(display);
+    // resize window
+    if (activated || resizing || maximized || fullscreen)
+    {
+        if (width >= 100 && height >= 100 && (window->compositeWidth != width || window->compositeHeight != height))
+        {
+            int clientWidth = width;
+            int clientHeight = height;
+            if (useClientDecorations)
+            {
+                clientWidth = width - (DECORATIONS_BAR_SIZE * 2);
+                clientHeight = height - (DECORATIONS_BAR_SIZE + DECORATIONS_TOPBAR_SIZE);
+            }
+            SetWindowSize(clientWidth, clientHeight);
+
+            if (useClientDecorations)
+            {
+                ResizeSurfaceBuffer(&window->clientSurfaceBuffer, window->clientSurface);
+                wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
+                wl_surface_commit(window->clientSurface);
+            }
+
+            ResizeSurfaceBuffer(&window->surfaceBuffer, window->surface);
+            if (useClientDecorations) DrawButtons();
+            wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
+            wl_surface_commit(window->surface);
+
+            //xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);// not needed
+            wl_display_flush(display);
+        }
+    }
 }
 
 void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel)
