@@ -78,7 +78,7 @@ typedef struct SurfaceBuffer
     uint32_t color;
     char* name;
     int fd;
-    int stride, shm_pool_size;
+    int stride, size;
     struct wl_shm_pool *pool;
     struct wl_buffer *buffer;
     uint32_t *pixels;
@@ -141,7 +141,7 @@ uint32_t ToColor(char r, char g, char b, char a)
 void BlitPoint(uint32_t* pixels, int x, int y, uint32_t color)
 {
     int i = x + (y * window->compositeWidth);
-    if (i >= 0 && i < window->surfaceBuffer.shm_pool_size) pixels[i] = color;
+    if (i >= 0 && i < window->surfaceBuffer.size) pixels[i] = color;
 }
 
 void BlitLine(uint32_t* pixels, int x, int y, int velX, int velY, int stepCount, uint32_t color)
@@ -199,9 +199,12 @@ void DrawButtons()
 
 int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface, char* name, uint32_t color)
 {
+    // get buffer sizes
+    int oldSize = buffer->size;
     buffer->stride = buffer->width * sizeof(uint32_t);
-    buffer->shm_pool_size = buffer->height * buffer->stride;
+    buffer->size = buffer->height * buffer->stride;
 
+    // alloc name if needed
     if (name != NULL)
     {
         if (buffer->name != NULL) free(buffer->name);
@@ -210,24 +213,29 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
         memcpy(buffer->name, name, nameSize);
     }
 
-    buffer->fd = shm_open(buffer->name, O_RDWR | O_CREAT | O_EXCL, 0600);
-    shm_unlink(buffer->name);
-    if (buffer->fd < 0 || errno == EEXIST) return 0;
-    int result = ftruncate(buffer->fd, buffer->shm_pool_size);
-    if (result < 0 || errno == EINTR) return 0;
-
-    buffer->pixels = mmap(NULL, buffer->shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
-    buffer->pool = wl_shm_create_pool(shm, buffer->fd, buffer->shm_pool_size);
-
-    int index = 0;
-    int offset = buffer->height * buffer->stride * index;
-    buffer->buffer = wl_shm_pool_create_buffer(buffer->pool, offset, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
-    memset(buffer->pixels, 0, buffer->width * buffer->height);
-    buffer->color = color;
-    for (int i = 0; i < buffer->width * buffer->height; ++i)
+    // only create new file if needed
+    if (buffer->fd < 0)
     {
-        buffer->pixels[i] = color;
+        buffer->fd = shm_open(buffer->name, O_RDWR | O_CREAT | O_TRUNC, 0600);
+        if (buffer->fd < 0 || errno == EEXIST) return 0;
     }
+
+    // set file size
+    if (buffer->size > oldSize)// only increase file size or we can get buffer access violations in pool
+    {
+        int result = ftruncate(buffer->fd, buffer->size);
+        if (result < 0 || errno == EINTR) return 0;
+    }
+
+    // map memory
+    buffer->pixels = mmap(NULL, buffer->size, PROT_READ | PROT_WRITE, MAP_SHARED, buffer->fd, 0);
+    shm_unlink(buffer->name);// call after mmap according to docs
+    memset(buffer->pixels, color, buffer->width * buffer->height * sizeof(uint32_t));// clear to color
+
+    // create pool
+    buffer->pool = wl_shm_create_pool(shm, buffer->fd, buffer->size);
+    buffer->buffer = wl_shm_pool_create_buffer(buffer->pool, 0, buffer->width, buffer->height, buffer->stride, WL_SHM_FORMAT_XRGB8888);
+    buffer->color = color;
 
     wl_surface_attach(surface, buffer->buffer, 0, 0);
     return 1;
@@ -236,13 +244,12 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
 int ResizeSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface)
 {
     // dispose old buffer
-    munmap(buffer->pixels, buffer->shm_pool_size);
+    munmap(buffer->pixels, buffer->size);
     wl_shm_pool_destroy(buffer->pool);
     wl_buffer_destroy(buffer->buffer);
 
     // create new buffer
-    CreateSurfaceBuffer(buffer, surface, NULL, buffer->color);
-    return 1;
+    return CreateSurfaceBuffer(buffer, surface, NULL, buffer->color);
 }
 
 void SetWindowSize(int width, int height)
@@ -309,6 +316,8 @@ int main(void)
 
     // create window
     window = (struct Window*)calloc(1, sizeof(Window));
+    window->surfaceBuffer.fd = -1;
+    window->clientSurfaceBuffer.fd = -1;
     SetWindowSize(320, 240);
 
     // create window surface
@@ -323,7 +332,7 @@ int main(void)
     xdg_toplevel_set_min_size(window->xdg_toplevel, 100, 100);
 
     // get server-side decorations
-    if (!useClientDecorations)
+    if (!useClientDecorations && decoration_manager != NULL)
     {
         decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, window->xdg_toplevel);
         zxdg_toplevel_decoration_v1_add_listener(decoration, &decoration_listener, NULL);
@@ -362,11 +371,11 @@ int main(void)
     // shutdown
     if (useClientDecorations)
     {
-        munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.shm_pool_size);
+        munmap(window->clientSurfaceBuffer.pixels, window->clientSurfaceBuffer.size);
         wl_shm_pool_destroy(window->clientSurfaceBuffer.pool);
         wl_buffer_destroy(window->clientSurfaceBuffer.buffer);
     }
-    munmap(window->surfaceBuffer.pixels, window->surfaceBuffer.shm_pool_size);
+    munmap(window->surfaceBuffer.pixels, window->surfaceBuffer.size);
     wl_shm_pool_destroy(window->surfaceBuffer.pool);
     wl_buffer_destroy(window->surfaceBuffer.buffer);
 
@@ -581,6 +590,11 @@ void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, u
 {
     xdg_surface_ack_configure(xdg_surface, serial);
     if (decoration_manager != NULL) zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+
+    // must commit here
+    if (useClientDecorations) wl_surface_commit(window->clientSurface);
+    wl_surface_commit(window->surface);
+    wl_display_flush(display);
 }
 
 void xdg_toplevelconfigure_bounds(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height)
@@ -594,25 +608,34 @@ void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel
     int maximized = 0;
     int fullscreen = 0;
     int resizing = 0;
+    int floating = 1;
     const uint32_t *state = NULL;
     wl_array_for_each(state, states)
     {
-        printf("state: %d\n", *state);
-        if (*state == XDG_TOPLEVEL_STATE_ACTIVATED) activated = 1;
-        if (*state == XDG_TOPLEVEL_STATE_MAXIMIZED) maximized = 1;
-        if (*state == XDG_TOPLEVEL_STATE_FULLSCREEN) fullscreen = 1;
-        if (*state == XDG_TOPLEVEL_STATE_RESIZING) resizing = 1;
+        switch (*state)
+        {
+            case XDG_TOPLEVEL_STATE_ACTIVATED: activated = 1; break;
+            case XDG_TOPLEVEL_STATE_RESIZING: resizing = 1; break;
+            case XDG_TOPLEVEL_STATE_MAXIMIZED: maximized = 1; break;
+            case XDG_TOPLEVEL_STATE_FULLSCREEN: fullscreen = 1; break;
+
+            case XDG_TOPLEVEL_STATE_TILED_LEFT:
+            case XDG_TOPLEVEL_STATE_TILED_RIGHT:
+            case XDG_TOPLEVEL_STATE_TILED_TOP:
+            case XDG_TOPLEVEL_STATE_TILED_BOTTOM:
+                floating = 0;
+                break;
+        }
     }
 
     // manage maximized state
-    if (!window->isMaximized && maximized)
+    if (maximized)
     {
         window->isMaximized = 1;
     }
-    else if (window->isMaximized && activated && !resizing && window->compositeWidth != width && window->compositeHeight != height)
+    else if (floating)
     {
         window->isMaximized = 0;
-        xdg_toplevel_unset_maximized(window->xdg_toplevel);
     }
 
     // resize window
@@ -641,7 +664,6 @@ void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel
             wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
             wl_surface_commit(window->surface);
 
-            //xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);// not needed
             wl_display_flush(display);
         }
     }
@@ -657,15 +679,15 @@ void xdg_wm_base_ping(void *data, struct xdg_wm_base *base, uint32_t serial)
     xdg_wm_base_pong(base, serial);
 }
 
-int t = 0;
+int decorationConfigureCount = 0;
 void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, enum zxdg_toplevel_decoration_v1_mode mode)
 {
     current_mode = mode;
 
-    if (t != 2)// for some reason this is spammed on KDE (so ignore after a couple iterations)
+    if (decorationConfigureCount != 2)// for some reason this is spammed on KDE (so ignore after a couple iterations)
     {
         printf("decoration_handle_configure: %d\n", mode);
-        t++;
+        decorationConfigureCount++;
         if (useClientDecorations) wl_surface_commit(window->clientSurface);
         wl_surface_commit(window->surface);
         wl_display_flush(display);
