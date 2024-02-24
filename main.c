@@ -589,7 +589,7 @@ void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_
 void xdg_surface_handle_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial)
 {
     xdg_surface_ack_configure(xdg_surface, serial);
-    if (decoration_manager != NULL) zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    //if (decoration_manager != NULL) zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 
     // must commit here
     if (useClientDecorations) wl_surface_commit(window->clientSurface);
@@ -629,17 +629,20 @@ void xdg_toplevel_handle_configure(void *data, struct xdg_toplevel *xdg_toplevel
     }
 
     // manage maximized state
-    if (maximized)
+    int currentMaximized = window->isMaximized;
+    if (!window->isMaximized && maximized)
     {
         window->isMaximized = 1;
+        printf("maximized\n");
     }
-    else if (floating)
+    else if (window->isMaximized && floating)
     {
         window->isMaximized = 0;
+        printf("un-maximized\n");
     }
 
     // resize window
-    if (activated || resizing || maximized || fullscreen)
+    if (activated || resizing || maximized || fullscreen || currentMaximized != window->isMaximized)
     {
         if (width >= 100 && height >= 100 && (window->compositeWidth != width || window->compositeHeight != height))
         {
@@ -679,17 +682,8 @@ void xdg_wm_base_ping(void *data, struct xdg_wm_base *base, uint32_t serial)
     xdg_wm_base_pong(base, serial);
 }
 
-int decorationConfigureCount = 0;
 void decoration_handle_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, enum zxdg_toplevel_decoration_v1_mode mode)
 {
     current_mode = mode;
-
-    if (decorationConfigureCount != 2)// for some reason this is spammed on KDE (so ignore after a couple iterations)
-    {
-        printf("decoration_handle_configure: %d\n", mode);
-        decorationConfigureCount++;
-        if (useClientDecorations) wl_surface_commit(window->clientSurface);
-        wl_surface_commit(window->surface);
-        wl_display_flush(display);
-    }
+    printf("decoration_handle_configure: %d\n", mode);
 }
