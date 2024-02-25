@@ -243,13 +243,17 @@ int CreateSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface
 
 int ResizeSurfaceBuffer(struct SurfaceBuffer* buffer, struct wl_surface* surface)
 {
-    // dispose old buffer
+    // pre-dispose old buffers
     munmap(buffer->pixels, buffer->size);
     wl_shm_pool_destroy(buffer->pool);
-    wl_buffer_destroy(buffer->buffer);
+    struct wl_buffer* oldBuffer = buffer->buffer;// dispose after new buffer is created
 
     // create new buffer
-    return CreateSurfaceBuffer(buffer, surface, NULL, buffer->color);
+    int result = CreateSurfaceBuffer(buffer, surface, NULL, buffer->color);
+
+    // post-dispose old buffer
+    wl_buffer_destroy(oldBuffer);
+    return result;
 }
 
 void SetWindowSize(int width, int height)

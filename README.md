@@ -3,7 +3,7 @@
 * No OpenGL/Vulkan requirements and just pure Wayland buffers
 * Writen in C
 
-## Install headers
+## Install XML headers
 sudo apt install wayland-protocols
 
 ## HowTo: Generate Wayland headers
