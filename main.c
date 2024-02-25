@@ -356,13 +356,13 @@ int main(void)
     }
 
     // finalize surfaces
-    wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
-    wl_surface_commit(window->surface);
     if (useClientDecorations)
     {
         wl_surface_damage(window->clientSurface, 0, 0, window->clientSurfaceBuffer.width, window->clientSurfaceBuffer.height);
         wl_surface_commit(window->clientSurface);
     }
+    wl_surface_damage(window->surface, 0, 0, window->surfaceBuffer.width, window->surfaceBuffer.height);
+    wl_surface_commit(window->surface);
     wl_display_flush(display);
 
     // event loop
