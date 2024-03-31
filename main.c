@@ -390,7 +390,11 @@ int main(void)
     }
 
     if (decoration != NULL) zxdg_toplevel_decoration_v1_destroy(decoration);
-    if (useClientDecorations) wl_surface_destroy(window->clientSurface);
+    if (window->clientSubSurface != NULL) 
+    {
+        wl_surface_destroy(window->clientSurface);
+        wl_subsurface_destroy(window->clientSubSurface);
+    }
     wl_surface_destroy(window->surface);
     wl_display_disconnect(display);
     return 0;
@@ -494,7 +498,7 @@ void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, stru
 void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface)
 {
     mouseHoverSurface = NULL;
-    serial = -1;
+    mouseHoverSerial = -1;
 }
 
 void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
