@@ -90,10 +90,10 @@ typedef struct Window
     int compositeWidth, compositeHeight;
     int isMaximized;
 
-    Rect clientRect_Drag_TopBar;
-    Rect clientRect_Resize_LeftBar, clientRect_Resize_RightBar, clientRect_Resize_BottomBar, clientRect_Resize_TopBar;
-    Rect clientRect_Resize_BottomLeft, clientRect_Resize_BottomRight, clientRect_Resize_TopLeft, clientRect_Resize_TopRight;
-    Rect clientRect_ButtonMin, clientRect_ButtonMax, clientRect_ButtonClose;
+    struct Rect clientRect_Drag_TopBar;
+    struct Rect clientRect_Resize_LeftBar, clientRect_Resize_RightBar, clientRect_Resize_BottomBar, clientRect_Resize_TopBar;
+    struct Rect clientRect_Resize_BottomLeft, clientRect_Resize_BottomRight, clientRect_Resize_TopLeft, clientRect_Resize_TopRight;
+    struct Rect clientRect_ButtonMin, clientRect_ButtonMax, clientRect_ButtonClose;
 
     struct wl_surface* clientSurface;
     struct wl_subsurface* clientSubSurface;
@@ -112,9 +112,9 @@ int useClientDecorations = 1;
 #define DECORATIONS_TOPBAR_SIZE 32
 #define DECORATIONS_BUTTON_SIZE 32
 
-Rect CreateRect(int x, int y, int width, int height)
+struct Rect CreateRect(int x, int y, int width, int height)
 {
-    Rect rect;
+    struct Rect rect;
     rect.x = x;
     rect.y = y;
     rect.width = width;
@@ -122,7 +122,7 @@ Rect CreateRect(int x, int y, int width, int height)
     return rect;
 }
 
-int WithinRect(Rect rect, int x, int y)
+int WithinRect(struct Rect rect, int x, int y)
 {
     return x >= rect.x && x <= (rect.x + rect.width) && y >= rect.y && y <= (rect.y + rect.height);
 }
@@ -170,7 +170,7 @@ void BlitRect(uint32_t* pixels, int x, int y, int width, int height, uint32_t co
 void DrawButtons()
 {
     int x = window->compositeWidth - (24 + 4);
-    Rect rect = window->clientRect_ButtonClose;
+    struct Rect rect = window->clientRect_ButtonClose;
     BlitRect(window->surfaceBuffer.pixels, rect.x, rect.y, rect.width, rect.height, ToColor(255, 0, 0, 255));
     BlitLine(window->surfaceBuffer.pixels, rect.x + 4, rect.y + 4, 1, 1, 16, ToColor(0, 0, 0, 255));// cross-right
     BlitLine(window->surfaceBuffer.pixels, rect.x + 3, rect.y + 4, 1, 1, 16, ToColor(0, 0, 0, 255));// cross-right 2
